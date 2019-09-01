@@ -34,7 +34,6 @@
 #include <string>
 
 #include <hardware/bt_av.h>
-
 #include "a2dp_api.h"
 #include "audio_a2dp_hw/include/audio_a2dp_hw.h"
 #include "avdt_api.h"
@@ -659,6 +658,11 @@ bool A2DP_AdjustCodec(uint8_t* p_codec_info);
 // Returns the corresponding |btav_a2dp_codec_index_t| on success,
 // otherwise |BTAV_A2DP_CODEC_INDEX_MAX|.
 btav_a2dp_codec_index_t A2DP_SourceCodecIndex(const uint8_t* p_codec_info);
+
+// Gets the A2DP Source codec index for a given |p_codec_info|.
+// Returns the corresponding |btav_a2dp_codec_index_t| on success,
+// otherwise |BTAV_A2DP_CODEC_INDEX_MAX|.
+btav_a2dp_codec_index_t A2DP_SinkCodecIndex(const uint8_t* p_codec_info);
 
 // Gets the A2DP codec name for a given |codec_index|.
 const char* A2DP_CodecIndexStr(btav_a2dp_codec_index_t codec_index);

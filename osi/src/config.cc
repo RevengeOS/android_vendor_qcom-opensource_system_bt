@@ -116,12 +116,14 @@ config_t* config_new_clone(const config_t* src) {
        node != list_end(src->sections); node = list_next(node)) {
     section_t* sec = static_cast<section_t*>(list_node(node));
 
-    for (const list_node_t* node_entry = list_begin(sec->entries);
-         node_entry != list_end(sec->entries);
-         node_entry = list_next(node_entry)) {
-      entry_t* entry = static_cast<entry_t*>(list_node(node_entry));
+    if (sec) {
+      for (const list_node_t* node_entry = list_begin(sec->entries);
+           node_entry != list_end(sec->entries);
+           node_entry = list_next(node_entry)) {
+        entry_t* entry = static_cast<entry_t*>(list_node(node_entry));
 
-      config_set_string(ret, sec->name, entry->key, entry->value);
+        config_set_string(ret, sec->name, entry->key, entry->value);
+      }
     }
   }
 
@@ -447,13 +449,16 @@ bool config_save(const config_t* config, const char* filename) {
              directoryname, strerror(errno));
   }
 
+  if (syncfs(dir_fd) < 0) {
+    LOG_WARN(LOG_TAG, "%s unable to syncfs dir '%s': %s", __func__,
+             directoryname, strerror(errno));
+  }
+
   if (close(dir_fd) < 0) {
     LOG_ERROR(LOG_TAG, "%s unable to close dir '%s': %s", __func__,
               directoryname, strerror(errno));
     goto error;
   }
-  //sync() will ensure bt_config is saved to NVRAM and prevent file curruption
-  sync();
   osi_free(temp_filename);
   osi_free(temp_dirname);
   return true;
@@ -565,8 +570,8 @@ static section_t* section_find(const config_t* config, const char* section) {
   for (const list_node_t* node = list_begin(config->sections);
        node != list_end(config->sections); node = list_next(node)) {
     section_t* sec = static_cast<section_t*>(list_node(node));
-    if (!strcmp(sec->name, section)) return sec;
-  }
+    if (sec && !strcmp(sec->name, section)) return sec;
+}
 
   return NULL;
 }

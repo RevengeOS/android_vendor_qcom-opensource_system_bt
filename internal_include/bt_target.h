@@ -576,6 +576,10 @@
 #endif
 
 /* The maximum number of simultaneous channels that L2CAP can support. */
+#if defined (MAX_L2CAP_CHANNELS) && (MAX_L2CAP_CHANNELS < 32)
+#undef MAX_L2CAP_CHANNELS
+#endif
+
 #ifndef MAX_L2CAP_CHANNELS
 #define MAX_L2CAP_CHANNELS 20
 #endif
@@ -899,7 +903,7 @@
 
 /* The maximum number of simultaneous client and server connections. */
 #ifndef SDP_MAX_CONNECTIONS
-#define SDP_MAX_CONNECTIONS 4
+#define SDP_MAX_CONNECTIONS 10
 #endif
 
 /* The MTU size for the L2CAP configuration. */

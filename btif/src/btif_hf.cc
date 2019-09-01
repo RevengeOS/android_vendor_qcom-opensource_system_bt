@@ -620,6 +620,13 @@ static void btif_hf_upstreams_evt(uint16_t event, char* p_param) {
       {
         HAL_HF_CBACK(bt_hf_callbacks, ConnectionStateCallback, btif_hf_cb[idx].state,
                   &btif_hf_cb[idx].connected_bda);
+        //If the active device is disconnected, clear the active device
+        if (is_active_device(btif_hf_cb[idx].connected_bda)) {
+          active_bda = RawAddress::kEmpty;
+          BTIF_TRACE_IMP("%s: Active device is disconnected, clear the active device %s",
+              __func__, active_bda.ToString().c_str());
+          BTA_AgSetActiveDevice(active_bda);
+        }
       }
 #if (TWS_AG_ENABLED == TRUE)
       bd_addr = btif_hf_cb[idx].connected_bda;
@@ -644,13 +651,6 @@ static void btif_hf_upstreams_evt(uint16_t event, char* p_param) {
       btif_hf_cb[idx].connected_bda = RawAddress::kAny;
       btif_hf_cb[idx].peer_feat = 0;
       clear_phone_state_multihf(idx);
-      //If the active device is disconnected, clear the active device
-      if (is_active_device(bd_addr)) {
-        active_bda = RawAddress::kEmpty;
-        BTIF_TRACE_IMP("%s: Active device is disconnected, clear the active device %s",
-            __func__, active_bda.ToString().c_str());
-        BTA_AgSetActiveDevice(active_bda);
-      }
       /* If AG_OPEN was received but SLC was not setup in a specified time (10
        *seconds),
        ** then AG_CLOSE may be received. We need to advance the queue here
@@ -703,8 +703,12 @@ static void btif_hf_upstreams_evt(uint16_t event, char* p_param) {
       }
 #endif
       btif_hf_cb[idx].audio_state = BTHF_AUDIO_STATE_DISCONNECTED;
-      HAL_HF_CBACK(bt_hf_callbacks, AudioStateCallback, BTHF_AUDIO_STATE_DISCONNECTED,
+
+      // Ignore SCO disconnection event if SLC is already disconnected
+      if (btif_hf_cb[idx].state == BTHF_CONNECTION_STATE_SLC_CONNECTED) {
+        HAL_HF_CBACK(bt_hf_callbacks, AudioStateCallback, BTHF_AUDIO_STATE_DISCONNECTED,
                 &btif_hf_cb[idx].connected_bda);
+      }
       break;
 
     /* BTA auto-responds, silently discard */

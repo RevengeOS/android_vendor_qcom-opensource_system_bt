@@ -215,6 +215,9 @@ typedef enum {
   //the link as active.
   INTEROP_DISABLE_SNIFF_LINK_DURING_SCO,
 
+  //For some remote devicea, disable sniff mode during the call
+  INTEROP_DISABLE_SNIFF_DURING_CALL,
+
   END_OF_INTEROP_LIST
 } interop_feature_t;
 

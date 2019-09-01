@@ -171,7 +171,10 @@ static void btif_context_switched(void* p_msg) {
   /* each callback knows how to parse the data */
   if (p->p_cb) {
     BTIF_TRACE_VERBOSE("btif_context_switched for event: %u", p->event);
-    p->p_cb(p->event, p->p_param);
+    if(p->len)
+      p->p_cb(p->event, p->p_param);
+    else
+      p->p_cb(p->event, NULL);
   } else {
     BTIF_TRACE_ERROR("btif_context_switched with null callback");
   }
@@ -215,6 +218,7 @@ bt_status_t btif_transfer_context(tBTIF_CBACK* p_cback, uint16_t event,
   } else if (p_params) {
     memcpy(p_msg->p_param, p_params, param_len); /* callback parameter data */
   }
+  p_msg->len = param_len;
 
   btif_sendmsg(p_msg);
 
@@ -533,7 +537,7 @@ void btif_disable_bluetooth_evt(void) {
 void btif_hci_close(void) {
   LOG_INFO(LOG_TAG, "%s entered", __func__);
 
-  bte_main_disable();
+  bte_main_hci_close();
 
   LOG_INFO(LOG_TAG, "%s finished", __func__);
 }

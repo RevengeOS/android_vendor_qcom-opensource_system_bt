@@ -35,7 +35,7 @@
  * should eventually be
  * deleted using BtifAvrcpAudioTrackDelete (see below).
  */
-void* BtifAvrcpAudioTrackCreate(int trackFreq, int channelType);
+void* BtifAvrcpAudioTrackCreate(int trackFreq, int channelType, int codec_type);
 
 /**
  * Gets latency from audio track.

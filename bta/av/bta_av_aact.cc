@@ -85,6 +85,7 @@
 #include "bta_ar_api.h"
 #endif
 #include "device/include/device_iot_config.h"
+#include "osi/include/allocator.h"
 
 /*****************************************************************************
  *  Constants
@@ -204,6 +205,7 @@ const tBTA_AV_SACT bta_av_a2dp_action[] = {
     bta_av_open_at_inc,     /* BTA_AV_OPEN_AT_INC */
     bta_av_offload_req,     /* BTA_AV_OFFLOAD_REQ */
     bta_av_offload_rsp,     /* BTA_AV_OFFLOAD_RSP */
+    bta_av_disc_fail_as_acp,/* BTA_AV_DISC_FAIL */
     NULL};
 
 /* these tables translate AVDT events to SSM events */
@@ -1318,6 +1320,7 @@ void bta_av_cleanup(tBTA_AV_SCB* p_scb, UNUSED_ATTR tBTA_AV_DATA* p_data) {
 #endif
 
   p_scb->skip_sdp = false;
+  p_scb->cache_setconfig = NULL;
   if (p_scb->deregistring) {
     /* remove stream */
   for (int i = 0; i < BTAV_A2DP_CODEC_INDEX_MAX; i++) {
@@ -1523,15 +1526,13 @@ void bta_av_security_rsp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
 void bta_av_setconfig_rsp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
   uint8_t num = p_data->ci_setconfig.num_seid + 1;
   uint8_t avdt_handle = p_data->ci_setconfig.avdt_handle;
-  uint8_t* p_seid = p_data->ci_setconfig.p_seid;
-  int i;
   uint8_t local_sep;
 
   /* we like this codec_type. find the sep_idx */
   local_sep = bta_av_get_scb_sep_type(p_scb, avdt_handle);
   bta_av_adjust_seps_idx(p_scb, avdt_handle);
-  APPL_TRACE_DEBUG("%s: sep_idx: %d cur_psc_mask:0x%x", __func__,
-                   p_scb->sep_idx, p_scb->cur_psc_mask);
+  APPL_TRACE_DEBUG("%s: sep_idx: %d cur_psc_mask:0x%x, num: %d", __func__,
+                   p_scb->sep_idx, p_scb->cur_psc_mask, num);
 
   if ((AVDT_TSEP_SNK == local_sep) &&
       (p_data->ci_setconfig.err_code == AVDT_SUCCESS) &&
@@ -1542,6 +1543,10 @@ void bta_av_setconfig_rsp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
     p_scb->seps[p_scb->sep_idx].p_app_sink_data_cback(BTA_AV_SINK_MEDIA_CFG_EVT,
                                                       &av_sink_codec_info, p_scb->peer_addr);
   }
+
+  p_scb->cache_setconfig = (tBTA_AV_DATA *)osi_malloc(sizeof(tBTA_AV_DATA));
+  memset(p_scb->cache_setconfig, 0, sizeof(tBTA_AV_DATA));
+  memcpy(p_scb->cache_setconfig, p_data, sizeof(tBTA_AV_DATA));
 
   AVDT_ConfigRsp(p_scb->avdt_handle, p_scb->avdt_label,
                  p_data->ci_setconfig.err_code, p_data->ci_setconfig.category);
@@ -1563,37 +1568,11 @@ void bta_av_setconfig_rsp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
     else
       p_scb->avdt_version = AVDT_VERSION;
 
-    if (A2DP_GetCodecType(p_scb->cfg.codec_info) == A2DP_MEDIA_CT_SBC || num > 1) {
-        /* For any codec used by the SNK as INT, discover req is not sent in bta_av_config_ind.
-         * This is done since we saw an IOT issue with APTX codec. Thus, we now take same
-         * path for all codecs as for SBC. call disc_res now */
-        /* this is called in A2DP SRC path only, In case of SINK we don't need it  */
-        if (local_sep == AVDT_TSEP_SRC)
-          p_scb->p_cos->disc_res(p_scb->hndl, num, num, 0, p_scb->peer_addr,
-                                 UUID_SERVCLASS_AUDIO_SOURCE);
-
-        for (i = 1; i < num; i++) {
-          APPL_TRACE_DEBUG("%s: sep_info[%d] SEID: %d", __func__, i, p_seid[i - 1]);
-          /* initialize the sep_info[] to get capabilities */
-          p_scb->sep_info[i].in_use = false;
-          p_scb->sep_info[i].tsep = AVDT_TSEP_SNK;
-          p_scb->sep_info[i].media_type = p_scb->media_type;
-          p_scb->sep_info[i].seid = p_seid[i - 1];
-        }
-
-        /* only in case of local sep as SRC we need to look for other SEPs, In case
-         * of SINK we don't */
-        if (local_sep == AVDT_TSEP_SRC) {
-          /* Make sure UUID has been initialized... */
-          if (p_scb->uuid_int == 0) p_scb->uuid_int = UUID_SERVCLASS_AUDIO_SOURCE;
-            bta_av_next_getcap(p_scb, p_data);
-        }
-    } else {
-        if (local_sep == AVDT_TSEP_SRC)
-          if (p_scb->uuid_int == 0) p_scb->uuid_int = UUID_SERVCLASS_AUDIO_SOURCE/*p_scb->open_api.uuid*/;
-            /* we do not know the peer device and it is using non-SBC codec
-             * we need to know all the SEPs on SNK */
-          bta_av_discover_req(p_scb, NULL);
+    if (local_sep == AVDT_TSEP_SRC) {
+      if (p_scb->uuid_int == 0) p_scb->uuid_int = UUID_SERVCLASS_AUDIO_SOURCE;
+        /* we do not know the peer device and it is using non-SBC codec
+         * we need to know all the SEPs on SNK */
+      bta_av_discover_req(p_scb, NULL);
     }
   }
 }
@@ -1997,6 +1976,13 @@ void bta_av_disc_res_as_acp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
   /* store number of stream endpoints returned */
   p_scb->num_seps = p_data->str_msg.msg.discover_cfm.num_seps;
 
+  if (p_scb->cache_setconfig) {
+    APPL_TRACE_DEBUG("%s: Got discover_res as ok from remote.", __func__);
+    memset(p_scb->cache_setconfig, 0, sizeof(tBTA_AV_DATA));
+    osi_free(p_scb->cache_setconfig);
+    p_scb->cache_setconfig = NULL;
+  }
+
   for (i = 0; i < p_scb->num_seps; i++) {
     /* steam is a sink, and is audio */
     if ((p_scb->sep_info[i].tsep == AVDT_TSEP_SNK) &&
@@ -2005,6 +1991,9 @@ void bta_av_disc_res_as_acp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
       num_snks++;
     }
   }
+
+  APPL_TRACE_DEBUG("%s: peer_addr: %s, num_seps = %d, num_snks = %d",
+          __func__, p_scb->peer_addr.ToString().c_str(), p_scb->num_seps, num_snks);
   p_scb->p_cos->disc_res(p_scb->hndl, p_scb->num_seps, num_snks, 0,
                          p_scb->peer_addr, UUID_SERVCLASS_AUDIO_SOURCE);
   p_scb->num_disc_snks = num_snks;
@@ -2343,12 +2332,6 @@ void bta_av_getcap_results(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
     if (uuid_int == UUID_SERVCLASS_AUDIO_SOURCE) {
       A2DP_AdjustCodec(cfg.codec_info);
     }
-#if (TWS_ENABLED == TRUE)
-    if (strcmp(A2DP_CodecName(cfg.codec_info), "aptX-TWS") == 0) {
-      cfg.psc_mask &= ~AVDT_PSC_DELAY_RPT;
-      APPL_TRACE_DEBUG("%s:resetting delay report flag for tws+ codec",__func__);
-    }
-#endif
     /* open the stream */
     AVDT_OpenReq(p_scb->seps[p_scb->sep_idx].av_handle, p_scb->peer_addr,
                  p_scb->sep_info[p_scb->sep_info_idx].seid, &cfg);
@@ -4400,4 +4383,57 @@ void bta_av_offload_rsp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
   tBTA_AV bta_av_data;
   bta_av_data.status = status;
   (*bta_av_cb.p_cback)(BTA_AV_OFFLOAD_START_RSP_EVT, &bta_av_data);
+}
+
+/*******************************************************************************
+ *
+ * Function         bta_av_disc_fail_as_acp
+ *
+ * Description      This function is called when for AVDTP_DISC, remote gives
+ *                  nagative reply and do get_caps for the sep on which remote
+ *                  does set_config.
+ *
+ * Returns          void
+ *
+ ******************************************************************************/
+void bta_av_disc_fail_as_acp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
+  if (p_scb->cache_setconfig) {
+    APPL_TRACE_DEBUG("%s: Need to reuse the cached set_config, to do get_caps"
+                      " for the same SEP", __func__);
+    memcpy(p_data, p_scb->cache_setconfig, sizeof(tBTA_AV_DATA));
+    memset(p_scb->cache_setconfig, 0, sizeof(tBTA_AV_DATA));
+    osi_free(p_scb->cache_setconfig);
+    p_scb->cache_setconfig = NULL;
+  }
+
+  uint8_t num = p_data->ci_setconfig.num_seid + 1;
+  uint8_t avdt_handle = p_data->ci_setconfig.avdt_handle;
+  uint8_t* p_seid = p_data->ci_setconfig.p_seid;
+  int i;
+  uint8_t local_sep;
+
+  /* we like this codec_type. find the sep_idx */
+  local_sep = bta_av_get_scb_sep_type(p_scb, avdt_handle);
+  APPL_TRACE_DEBUG("%s: sep_idx: %d cur_psc_mask:0x%x, num: %d", __func__,
+                   p_scb->sep_idx, p_scb->cur_psc_mask, num);
+  if (local_sep == AVDT_TSEP_SRC)
+    p_scb->p_cos->disc_res(p_scb->hndl, num, num, 0, p_scb->peer_addr,
+                           UUID_SERVCLASS_AUDIO_SOURCE);
+
+  for (i = 1; i < num; i++) {
+    APPL_TRACE_DEBUG("%s: sep_info[%d] SEID: %d", __func__, i, p_seid[i - 1]);
+    /* initialize the sep_info[] to get capabilities */
+    p_scb->sep_info[i].in_use = false;
+    p_scb->sep_info[i].tsep = AVDT_TSEP_SNK;
+    p_scb->sep_info[i].media_type = p_scb->media_type;
+    p_scb->sep_info[i].seid = p_seid[i - 1];
+  }
+
+  /* only in case of local sep as SRC we need to look for other SEPs, In case
+   * of SINK we don't */
+  if (local_sep == AVDT_TSEP_SRC) {
+    /* Make sure UUID has been initialized... */
+    if (p_scb->uuid_int == 0) p_scb->uuid_int = UUID_SERVCLASS_AUDIO_SOURCE;
+      bta_av_next_getcap(p_scb, p_data);
+  }
 }

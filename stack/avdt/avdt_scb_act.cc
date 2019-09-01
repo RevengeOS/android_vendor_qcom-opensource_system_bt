@@ -184,11 +184,11 @@ void avdt_scb_hdl_getconfig_rsp(UNUSED_ATTR tAVDT_SCB* p_scb,
  *
  ******************************************************************************/
 void avdt_scb_hdl_open_cmd(tAVDT_SCB* p_scb, tAVDT_SCB_EVT* p_data) {
-  if(!avdt_cb.conn_in_progress) {
-    avdt_scb_event(p_scb, AVDT_SCB_API_OPEN_RSP_EVT, p_data);
-  } else {
-    AVDT_TRACE_WARNING("Outgoing conn in progress, Reject Remote initiated AV Open");
+  if (p_scb->role == AVDT_DELAY_RPT_OPEN_INT || p_scb->role == AVDT_CONF_INT) {
+    AVDT_TRACE_WARNING("Outgoing conn in progress, Reject Remote initiated AV Open scb role %d", p_scb->role);
     avdt_scb_rej_state(p_scb, p_data);
+  } else {
+    avdt_scb_event(p_scb, AVDT_SCB_API_OPEN_RSP_EVT, p_data);
   }
 }
 
@@ -232,6 +232,8 @@ void avdt_scb_hdl_open_rsp(tAVDT_SCB* p_scb,
                      avdt_scb_transport_channel_timer_timeout, p_scb);
 }
 
+extern uint8_t btif_a2dp_sink_get_codec_type(void);
+
 /*******************************************************************************
  *
  * Function         avdt_scb_hdl_pkt_no_frag
@@ -252,6 +254,20 @@ void avdt_scb_hdl_pkt_no_frag(tAVDT_SCB* p_scb, tAVDT_SCB_EVT* p_data) {
   uint16_t ex_len;
   uint8_t pad_len = 0;
   uint16_t len = p_data->p_pkt->len;
+
+  if ((p_scb != NULL) && (p_scb->cs.p_sink_data_cback != NULL))
+  {
+      AVDT_TRACE_DEBUG(" Get current codec = %d", btif_a2dp_sink_get_codec_type());
+      // for vendor specific codec without RTP
+      if (btif_a2dp_sink_get_codec_type() == A2DP_MEDIA_CT_NON_A2DP)
+      {
+          // This must be a case of Sink as for Src, p_data_cback is made NULL
+          p_data->p_pkt->layer_specific = 0;
+          AVDT_TRACE_DEBUG("AVDTP Recv Packet, APTX len =  %d", p_data->p_pkt->len);
+          (*p_scb->cs.p_sink_data_cback)(avdt_scb_to_hdl(p_scb), p_data->p_pkt, 0, 0);
+          return;
+      }
+  }
 
   p = p_start = (uint8_t*)(p_data->p_pkt + 1) + p_data->p_pkt->offset;
 
@@ -1151,6 +1167,8 @@ void avdt_scb_hdl_write_req(tAVDT_SCB* p_scb, tAVDT_SCB_EVT* p_data) {
   uint8_t* p;
   uint32_t ssrc;
   bool add_rtp_header = !(p_data->apiwrite.opt & AVDT_DATA_OPT_NO_RTP);
+  AVDT_TRACE_DEBUG("%s: add_rtp_header: %d, num_protect: %d",
+                        __func__, add_rtp_header, p_scb->curr_cfg.num_protect);
 
   /* free packet we're holding, if any; to be replaced with new */
   if (p_scb->p_pkt != NULL) {

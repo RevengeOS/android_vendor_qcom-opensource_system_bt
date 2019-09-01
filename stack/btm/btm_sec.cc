@@ -24,6 +24,7 @@
 
 #define LOG_TAG "bt_btm_sec"
 
+#include <log/log.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -42,6 +43,8 @@
 
 #include "gatt_int.h"
 #include "device/include/device_iot_config.h"
+
+#include "bta/dm/bta_dm_int.h"
 
 #define BTM_SEC_MAX_COLLISION_DELAY (5000)
 
@@ -3174,7 +3177,7 @@ void btm_sec_rmt_name_request_complete(const RawAddress* p_bd_addr,
         BTM_TRACE_ERROR("%s: failed to start remote name request", __func__);
         if (btm_cb.api.p_auth_complete_callback) {
           (*btm_cb.api.p_auth_complete_callback)(
-              p_dev_rec->bd_addr, p_dev_rec->dev_class, p_dev_rec->sec_bd_name,
+              btm_cb.pairing_bda, 0, p_bd_name,
               HCI_ERR_MEMORY_FULL);
         }
       };
@@ -4244,8 +4247,13 @@ void btm_sec_encrypt_change(uint16_t handle, uint8_t status,
     }
   }
 
+  if ((status == HCI_SUCCESS) && (p_dev_rec->sec_state == BTM_SEC_STATE_IDLE) &&
+      (alarm_is_scheduled(btm_cb.sec_collision_timer)) &&
+      (btm_cb.p_collided_dev_rec == p_dev_rec))  {
+      BTM_TRACE_DEBUG("incoming encryption succeded, cancel collision timer");
+      alarm_cancel(btm_cb.sec_collision_timer);
   /* If this encryption was started by peer do not need to do anything */
-  if (p_dev_rec->sec_state != BTM_SEC_STATE_ENCRYPTING) {
+  } else if (p_dev_rec->sec_state != BTM_SEC_STATE_ENCRYPTING) {
     if (BTM_SEC_STATE_DELAY_FOR_ENC == p_dev_rec->sec_state) {
       p_dev_rec->sec_state = BTM_SEC_STATE_IDLE;
       p_dev_rec->p_callback = NULL;
@@ -4718,6 +4726,19 @@ void btm_sec_disconnected(uint16_t handle, uint8_t reason) {
 
   BTM_TRACE_EVENT("%s after update sec_flags=0x%x", __func__,
                   p_dev_rec->sec_flags);
+
+  /* Some devices hardcode sample LTK value from spec, instead of generating
+   * one. Treat such devices as insecure, and remove such bonds on
+   * disconnection.
+   */
+  if (is_sample_ltk(p_dev_rec->ble.keys.pltk)) {
+    android_errorWriteLog(0x534e4554, "128437297");
+    LOG(INFO) << __func__ << " removing bond to device that used sample LTK";
+
+    tBTA_DM_MSG p_data;
+    p_data.remove_dev.bd_addr = p_dev_rec->bd_addr;
+    bta_dm_remove_device(&p_data);
+  }
 
   if (p_dev_rec->sec_state == BTM_SEC_STATE_DISCONNECTING_BOTH) {
     p_dev_rec->sec_state = (transport == BT_TRANSPORT_LE)

@@ -73,6 +73,7 @@
 #include "device/include/interop.h"
 #if (TWS_AG_ENABLED == TRUE)
 #include "bta_ag_twsp.h"
+#include "bta_ag_twsp_dev.h"
 #endif
 
 #ifndef BTA_AG_SCO_DEBUG
@@ -85,6 +86,11 @@ bool sco_init_rmt_xfer = false;
 #ifndef BTA_AG_CODEC_NEGOTIATION_TIMEOUT_MS
 #define BTA_AG_CODEC_NEGOTIATION_TIMEOUT_MS (5 * 1000) /* 5 seconds */
 #endif
+
+#ifndef BTA_AG_XSCO_COLLISION_TIMEOUT_MS
+#define BTA_AG_XSCO_COLLISION_TIMEOUT_MS (2 * 1000) /* 2 seconds */
+#endif
+
 
 static char value[PROPERTY_VALUE_MAX];
 
@@ -169,6 +175,24 @@ static void bta_ag_sco_conn_cback(uint16_t sco_idx) {
 
 /*******************************************************************************
  *
+ * Function         bta_ag_xsco_collision_timer_cback
+ *
+ * Description      xSCO collision timer call back that gets called after
+ *                  collision timer expires and attempts for xSCO connection.
+ *
+ * Returns          void
+ *
+ ******************************************************************************/
+static void bta_ag_xsco_collision_timer_cback(void* data) {
+  APPL_TRACE_DEBUG("%s", __func__);
+  tBTA_AG_SCB* p_scb = (tBTA_AG_SCB*)data;
+
+  bta_ag_sco_open(p_scb, NULL);
+  bta_ag_cback_sco(p_scb, BTA_AG_AUDIO_OPENING_EVT);
+}
+
+/*******************************************************************************
+ *
  * Function         bta_ag_sco_disc_cback
  *
  * Description      BTM SCO disconnection callback.
@@ -180,11 +204,12 @@ static void bta_ag_sco_conn_cback(uint16_t sco_idx) {
 static void bta_ag_sco_disc_cback(uint16_t sco_idx) {
   uint16_t handle = 0;
   tBTA_AG_SCB* curr_scb;
+  uint8_t status = BTM_ReadScoDiscReason();
 
   APPL_TRACE_IMP(
       "bta_ag_sco_disc_cback(): sco_idx: 0x%x  p_cur_scb: 0x%08x  sco.state: "
-      "%d",
-      sco_idx, bta_ag_cb.sco.p_curr_scb, bta_ag_cb.sco.state);
+      "%d, status %x",
+      sco_idx, bta_ag_cb.sco.p_curr_scb, bta_ag_cb.sco.state, status);
 
   APPL_TRACE_DEBUG(
       "bta_ag_sco_disc_cback(): scb[0] addr: 0x%08x  in_use: %u  sco_idx: 0x%x "
@@ -290,6 +315,18 @@ static void bta_ag_sco_disc_cback(uint16_t sco_idx) {
     p_buf->event = BTA_AG_SCO_CLOSE_EVT;
     p_buf->layer_specific = handle;
     bta_sys_sendmsg(p_buf);
+
+    if ( status == HCI_ERR_DIFF_TRANSACTION_COLLISION &&
+         bta_ag_cb.sco.p_curr_scb->no_of_xsco_trials == 0 ) {
+
+      APPL_TRACE_IMP("%s: xSCO disc status is %x, retry xSCO after %x secs",
+                     __func__, status, BTA_AG_XSCO_COLLISION_TIMEOUT_MS);
+      alarm_set_on_mloop(bta_ag_cb.sco.p_curr_scb->xsco_conn_collision_timer,
+                        BTA_AG_XSCO_COLLISION_TIMEOUT_MS,
+                        bta_ag_xsco_collision_timer_cback,
+                        bta_ag_cb.sco.p_curr_scb);
+      bta_ag_cb.sco.p_curr_scb->no_of_xsco_trials++;
+    }
   } else {
     /* no match found */
     APPL_TRACE_DEBUG("no scb for ag_sco_disc_cback");
@@ -699,6 +736,11 @@ static void bta_ag_create_pending_sco(tBTA_AG_SCB* p_scb, bool is_local) {
   tBTA_AG_PEER_CODEC esco_codec = p_scb->inuse_codec;
   enh_esco_params_t params;
 
+  /* If there is timer running for xSCO setup, cancel it */
+  if (p_scb) {
+    alarm_cancel(p_scb->xsco_conn_collision_timer);
+  }
+
 #if (TWS_AG_ENABLED == TRUE)
   if (is_twsp_connected()) {
       APPL_TRACE_DEBUG("%s: sco_curr_scb %x, twsp_sco.curr_scb : %x p_scb : %x",
@@ -1094,6 +1136,8 @@ void bta_ag_sco_event(tBTA_AG_SCB* p_scb, uint8_t event) {
              p_sco->p_curr_scb->sco_idx = BTM_INVALID_SCO_INDEX;
              p_sco->p_curr_scb = NULL;
           }
+          APPL_TRACE_WARNING("%s: perform post sco close action to send indicator", __func__);
+          bta_ag_post_sco_close(p_scb, NULL);
           /* call app callback so that btif and app state
           /  go back to audio disconnected state */
           APPL_TRACE_WARNING("%s: SCO close during codec negotiation", __func__);
@@ -1217,7 +1261,8 @@ void bta_ag_sco_event(tBTA_AG_SCB* p_scb, uint8_t event) {
              atleast try opening the secondary SCO */
           if (is_twsp_device(p_scb->peer_addr)&&!p_scb->rmt_sco_req) {
               tBTA_AG_SCB *other_scb = get_other_twsp_scb((p_scb->peer_addr));
-              if (other_scb && twsp_sco_active(other_scb) == false) {
+              if (other_scb && twsp_sco_active(other_scb) == false &&
+                    get_twsp_state(other_scb) == TWSPLUS_EB_STATE_INEAR) {
                  dispatch_event_twsp_peer_device(p_scb, BTA_AG_SCO_OPEN_E);
               }
           }
@@ -1992,6 +2037,10 @@ void bta_ag_sco_conn_open(tBTA_AG_SCB* p_scb,
 
     /* call app callback */
     bta_ag_cback_sco(p_scb, BTA_AG_AUDIO_OPEN_EVT);
+
+    /* reset collision trials and timer */
+    p_scb->no_of_xsco_trials = 0;
+    alarm_cancel(p_scb->xsco_conn_collision_timer);
 
     /* reset to mSBC T2 settings as the preferred */
     p_scb->codec_msbc_settings = BTA_AG_SCO_MSBC_SETTINGS_T2;

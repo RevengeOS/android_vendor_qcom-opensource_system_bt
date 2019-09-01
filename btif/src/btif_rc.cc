@@ -118,7 +118,8 @@
 #define IDX_GET_TOTAL_NUM_OF_ITEMS_RSP 14
 #define IDX_SEARCH_RSP 15
 #define IDX_ADD_TO_NOW_PLAYING_RSP 16
-#define BTRC_FEAT_AVRC_UI_UPDATE 0x08
+
+#define BTRC_FEAT_AVRC_UI_UPDATE 0x10
 
 /* Update MAX value whenever IDX will be changed */
 #define MAX_CMD_QUEUE_LEN 17
@@ -470,7 +471,6 @@ extern bool btif_av_is_split_a2dp_enabled();
 extern int btif_av_idx_by_bdaddr(RawAddress *bd_addr);
 extern bool btif_av_check_flag_remote_suspend(int index);
 extern bt_status_t btif_hf_check_if_sco_connected();
-extern void btif_av_update_current_playing_device(int index);
 extern fixed_queue_t* btu_general_alarm_queue;
 extern void btif_av_set_earbud_state(const RawAddress& bd_addr, uint8_t tws_earbud_state);
 extern void btif_av_set_earbud_role(const RawAddress& bd_addr, uint8_t tws_earbud_role);
@@ -715,8 +715,12 @@ void handle_rc_features(btif_rc_device_cb_t* p_dev) {
     rc_features = (btrc_remote_features_t)(rc_features | BTRC_FEAT_METADATA);
   }
 
+  if (p_dev->rc_features & BTA_AV_FEAT_CA) {
+    rc_features = (btrc_remote_features_t)(rc_features | BTRC_FEAT_COVER_ART);
+  }
+
   if (p_dev->rc_features & BTA_AV_FEAT_AVRC_UI_UPDATE) {
-      rc_features = (btrc_remote_features_t)(rc_features | BTRC_FEAT_AVRC_UI_UPDATE);
+    rc_features = (btrc_remote_features_t)(rc_features | BTRC_FEAT_AVRC_UI_UPDATE);
   }
 
   BTIF_TRACE_DEBUG("%s: rc_features: 0x%x", __func__, rc_features);
@@ -1107,11 +1111,6 @@ void handle_rc_passthrough_cmd(tBTA_AV_REMOTE_CMD* p_remote_cmd) {
   /* Multicast: Passthru command on AVRCP only device when connected
    * to other A2DP devices, ignore it.
    */
-  if (btif_av_is_connected() &&
-      !btif_av_is_device_connected(p_dev->rc_addr)) {
-    BTIF_TRACE_ERROR("Passthrough on AVRCP only device: Ignore..");
-    return;
-  }
 
   /* Trigger DUAL Handoff when support single streaming */
   if (btif_av_is_playing() &&
@@ -1149,16 +1148,11 @@ void handle_rc_passthrough_cmd(tBTA_AV_REMOTE_CMD* p_remote_cmd) {
       APPL_TRACE_WARNING("Passthrough on the playing device");
     } else {
       BTIF_TRACE_DEBUG("Passthrough command on other device");
-        if (btif_av_is_device_connected(p_dev->rc_addr)) {
           /* Trigger suspend on currently playing device
            * Allow the Play to be sent to Music player to
            * address Play during Pause(Local/DUT initiated)
            * but SUSPEND not triggered by Audio module.
            */
-        } else {
-          APPL_TRACE_WARNING("%s(): Command Invalid on", __func__);
-          return;
-        }
     }
   }
 
@@ -1170,7 +1164,7 @@ skip:
 
   /* If AVRC is open and peer sends PLAY but there is no AVDT, then we queue-up
    * this PLAY */
-  if ((p_remote_cmd->rc_id == BTA_AV_RC_PLAY) && (!btif_av_is_connected())) {
+  if ((p_remote_cmd->rc_id == BTA_AV_RC_PLAY) && (!btif_av_is_device_connected(p_dev->rc_addr))) {
     APPL_TRACE_WARNING("%s: AVDT not open, queuing the PLAY command",
                        __func__);
     p_dev->rc_pending_play = true;
@@ -4660,6 +4654,7 @@ static void handle_notification_response(tBTA_AV_META_MSG* pmeta_msg,
          * if the play state is playing.
          */
         if (p_rsp->param.play_status == AVRC_PLAYSTATE_PLAYING) {
+          btif_sink_ho_through_avrcp_pback_status(rc_addr);
           rc_start_play_status_timer(p_dev);
         }
         HAL_CBACK(bt_rc_ctrl_callbacks, play_status_changed_cb, &rc_addr,
@@ -4758,6 +4753,7 @@ static void handle_notification_response(tBTA_AV_META_MSG* pmeta_msg,
         /* Start timer to get play status periodically
          * if the play state is playing.
          */
+        BTIF_TRACE_DEBUG("%s: play_status: %d", __func__, p_rsp->param.play_status);
         if (p_rsp->param.play_status == AVRC_PLAYSTATE_PLAYING) {
           btif_sink_ho_through_avrcp_pback_status(rc_addr);
           rc_start_play_status_timer(p_dev);

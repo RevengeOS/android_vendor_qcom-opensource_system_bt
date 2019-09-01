@@ -624,6 +624,7 @@ typedef struct {
   bool tws_device; //true for earbud false otherwise
   uint8_t channel_mode; //L:0 R:1 S:2 M:3
   bool offload_started;
+  tBTA_AV_DATA *cache_setconfig;
 //#endif
 } tBTA_AV_SCB;
 
@@ -642,6 +643,7 @@ typedef struct {
   uint8_t lidx;               /* (index+1) to LCB */
   tBTA_AV_FEAT peer_features; /* peer features mask */
   uint16_t  cover_art_psm;  /* l2cap psm for cover art on remote */
+  bool browse_open;
 } tBTA_AV_RCB;
 #define BTA_AV_NUM_RCB (BTA_AV_NUM_STRS + 2)
 
@@ -780,6 +782,7 @@ extern bool bta_av_is_scb_init(tBTA_AV_SCB* p_scb);
 extern void bta_av_set_scb_sst_incoming(tBTA_AV_SCB* p_scb);
 extern tBTA_AV_LCB* bta_av_find_lcb(const RawAddress& addr, uint8_t op);
 extern bool bta_av_is_multicast_enabled();
+extern tBTA_AV_SCB* bta_av_addr_to_scb(const RawAddress& bd_addr);
 
 /* main functions */
 extern void bta_av_api_deregister(tBTA_AV_DATA* p_data);
@@ -877,6 +880,7 @@ extern void bta_av_open_at_inc(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data);
 extern void bta_av_offload_req(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data);
 extern void bta_av_offload_rsp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data);
 extern void bta_av_vendor_offload_stop(tBTA_AV_SCB* p_scb);
+extern void bta_av_disc_fail_as_acp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data);
 #if (TWS_ENABLED == TRUE)
 extern void bta_av_set_tws_chn_mode(tBTA_AV_SCB* p_scb, bool adjust);
 #endif
