@@ -910,4 +910,5 @@ void BTA_AVSetEarbudRole(uint8_t role, tBTA_AV_HNDL hndl);
 void bta_av_sniff_enable(bool policy_enable, const RawAddress& peer_addr);
 bool bta_av_get_is_peer_state_incoming(const RawAddress& bd_addr);
 void bta_av_refresh_accept_signalling_timer(const RawAddress &remote_bdaddr);
+void bta_av_fake_suspend_rsp(const RawAddress &remote_bdaddr);
 #endif /* BTA_AV_API_H */

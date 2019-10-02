@@ -203,6 +203,8 @@ void bta_av_del_rc(tBTA_AV_RCB* p_rcb) {
       p_rcb->shdl = 0;
       p_rcb->lidx = 0;
     }
+    p_rcb->rc_opened = false;
+    p_rcb->peer_addr = RawAddress::kEmpty;
     /* else ACP && connected. do not clear the handle yet */
     AVRC_Close(rc_handle);
     if (rc_handle == bta_av_cb.rc_acp_handle)
@@ -613,7 +615,7 @@ void bta_av_rc_opened(tBTA_AV_CB* p_cb, tBTA_AV_DATA* p_data) {
   }
 
   i = p_data->rc_conn_chg.handle;
-  if (p_cb->rcb[i].handle == BTA_AV_RC_HANDLE_NONE) {
+  if ((i >= BTA_AV_NUM_RCB) || p_cb->rcb[i].handle == BTA_AV_RC_HANDLE_NONE) {
     APPL_TRACE_ERROR("not a valid handle:%d any more", i);
     return;
   }
@@ -645,6 +647,8 @@ void bta_av_rc_opened(tBTA_AV_CB* p_cb, tBTA_AV_DATA* p_data) {
   p_cb->rcb[i].shdl = shdl;
   p_cb->rcb[i].browse_open = true;
   rc_open.rc_handle = i;
+  p_cb->rcb[i].peer_addr = p_data->rc_conn_chg.peer_addr;
+  p_cb->rcb[i].rc_opened = true;
   APPL_TRACE_ERROR("bta_av_rc_opened rcb[%d] shdl:%d lidx:%d/%d", i, shdl,
                    p_cb->rcb[i].lidx, p_cb->lcb[BTA_AV_NUM_LINKS].lidx);
   p_cb->rcb[i].status |= BTA_AV_RC_CONN_MASK;
@@ -661,6 +665,10 @@ void bta_av_rc_opened(tBTA_AV_CB* p_cb, tBTA_AV_DATA* p_data) {
     APPL_TRACE_ERROR("rcb[%d].lidx=%d, lcb.conn_msk=x%x", i, p_cb->rcb[i].lidx,
                      p_lcb->conn_msk);
     disc = p_data->rc_conn_chg.handle | BTA_AV_CHNL_MSK;
+  } else if (shdl && shdl <= BTA_AV_NUM_LINKS &&
+      p_scb[shdl-1].peer_addr ==  p_data->rc_conn_chg.peer_addr) {
+    //Below line is to avoid RC create multiple time RC created first before av_sig_chng event
+    p_scb[shdl-1].rc_conn = true;
   }
 
   rc_open.peer_addr = p_data->rc_conn_chg.peer_addr;
@@ -1420,6 +1428,11 @@ void bta_av_conn_chg(tBTA_AV_DATA* p_data) {
             p_lcb_rc->addr == p_data->conn_chg.peer_addr) {
           /* AVRCP is already connected.
            * need to update the association betwen SCB and RCB */
+          if (!p_cb->rcb[p_cb->rc_acp_handle].rc_opened) {
+            if (p_cb->rcb[p_cb->rc_acp_handle].peer_addr != p_lcb_rc->addr) {
+              APPL_TRACE_ERROR("%s:RC is not open, stale entry",__func__);
+            }
+          }
           p_lcb_rc->conn_msk = 0; /* indicate RC ONLY is not connected */
           p_lcb_rc->lidx = 0;
           p_scb->rc_handle = p_cb->rc_acp_handle;
@@ -1666,12 +1679,13 @@ void bta_av_sig_chg(tBTA_AV_DATA* p_data) {
           APPL_TRACE_DEBUG("Found a free p_lcb : 0x%x", xx);
           p_lcb = &p_cb->lcb[xx];
           p_lcb->lidx = xx + 1;
-          p_lcb->addr = p_data->str_msg.bd_addr;
-          p_lcb->conn_msk = 0; /* clear the connect mask */
           /* start listening when the signal channel is open */
-          if (p_cb->features & BTA_AV_FEAT_RCTG) {
+          if (!p_cb->p_scb[xx]->rc_conn && p_cb->features & BTA_AV_FEAT_RCTG) {
             bta_av_rc_create(p_cb, AVCT_ACP, 0, p_lcb->lidx);
           }
+          p_cb->p_scb[xx]->rc_conn = false;
+          p_lcb->addr = p_data->str_msg.bd_addr;
+          p_lcb->conn_msk = 0; /* clear the connect mask */
           /* this entry is not used yet. */
           p_cb->conn_lcb |= mask; /* mark it as used */
           APPL_TRACE_DEBUG("start sig timer %d", p_data->hdr.offset);

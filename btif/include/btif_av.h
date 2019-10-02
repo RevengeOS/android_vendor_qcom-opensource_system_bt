@@ -281,11 +281,11 @@ bool btif_av_is_multicast_supported();
  *
  * Function         btif_av_get_peer_addr
  *
- * Description      Returns peer device address
+ * Description      Returns active peer device address
  *
  * Returns          peer address
  *******************************************************************************/
-void btif_av_get_peer_addr(RawAddress *peer_bda);
+void btif_av_get_active_peer_addr(RawAddress *peer_bda);
 
 /*******************************************************************************
  *
@@ -537,4 +537,7 @@ void btif_initiate_sink_handoff(int idx, bool audio_state_changed);
 *******************************************************************************/
 int btif_get_max_allowable_sink_connections();
 
+void btif_av_set_suspend_rsp_track_timer(int index);
+void btif_av_set_suspend_rsp_track_timer_tout(void* data);
+void btif_av_clear_suspend_rsp_track_timer(int index);
 #endif /* BTIF_AV_H */

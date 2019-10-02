@@ -1736,9 +1736,28 @@ void bta_av_str_opened(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
     (*bta_av_cb.p_cback)(BTA_AV_OPEN_EVT, &bta_av_data);
 #if (TWS_ENABLED == TRUE)
     APPL_TRACE_DEBUG("%s:audio count  = %d ",__func__, bta_av_cb.audio_open_cnt);
-    if (p_scb->tws_device && bta_av_cb.audio_open_cnt > 1) {
-      APPL_TRACE_DEBUG("%s: 2nd TWS device, set channel mode",__func__);
-      bta_av_set_tws_chn_mode(p_scb, false);
+    if (p_scb->tws_device) {
+      bool channel_set = false;
+      RawAddress p_addr;
+      if (bta_av_cb.audio_open_cnt > 1 &&
+       BTM_SecGetTwsPlusPeerDev(p_scb->peer_addr,p_addr) &&
+       !p_addr.IsEmpty()) {
+       for (int i = 0; i < BTA_AV_NUM_STRS; i++) {
+         if (bta_av_cb.p_scb[i]->peer_addr == p_addr &&
+          bta_av_cb.p_scb[i]->state == BTA_AV_OPEN_SST)
+          APPL_TRACE_DEBUG("%s: 2nd TWS device, adjust channel mode",__func__);
+          bta_av_set_tws_chn_mode(p_scb, false);
+          channel_set = true;
+          break;
+        }
+      }
+      if (!channel_set) {
+        APPL_TRACE_DEBUG("%s: 1st TWS device, set default mode",__func__);
+        if (open.bd_addr.address[5] % 2)
+          p_scb->channel_mode = 0;//Left channel
+        else
+          p_scb->channel_mode = 1;//Right channe
+      }
     }
 #endif
     if (open.starting) {
@@ -4383,6 +4402,36 @@ void bta_av_offload_rsp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
   tBTA_AV bta_av_data;
   bta_av_data.status = status;
   (*bta_av_cb.p_cback)(BTA_AV_OFFLOAD_START_RSP_EVT, &bta_av_data);
+}
+
+/*******************************************************************************
+ *
+ * Function         bta_av_fake_suspend_rsp
+ *
+ * Description      This function is called when the 2sec timer expired, to fake
+ *                  suspend response to btif
+ *
+ * Returns          void
+ *
+ ******************************************************************************/
+void bta_av_fake_suspend_rsp(const RawAddress &remote_bdaddr) {
+  tBTA_AV_SCB* p_scb = NULL;
+  tBTA_AV_SUSPEND suspend_rsp;
+  p_scb = bta_av_addr_to_scb(remote_bdaddr);
+  if (p_scb == NULL) {
+    APPL_TRACE_IMP("%s: p_scb is null, return", __func__);
+    return;
+  }
+  APPL_TRACE_IMP("%s: add: %s hdi = %d", __func__,
+                           remote_bdaddr.ToString().c_str(), p_scb->hdi);
+
+  suspend_rsp.status = BTA_AV_SUCCESS;
+  suspend_rsp.chnl = p_scb->chnl;
+  suspend_rsp.hndl = p_scb->hndl;
+  suspend_rsp.initiator = true;
+  tBTA_AV bta_av_data;
+  bta_av_data.suspend = suspend_rsp;
+  (*bta_av_cb.p_cback)(BTA_AV_SUSPEND_EVT, &bta_av_data);
 }
 
 /*******************************************************************************
